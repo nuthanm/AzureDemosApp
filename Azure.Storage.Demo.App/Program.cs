@@ -5,11 +5,11 @@ using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Table;
 using System.Xml.Linq;
 
-string connectionString = "AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;DefaultEndpointsProtocol=http;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;TableEndpoint=http://127.0.0.1:10002/devstoreaccount1;";
+string connectionString = "";
 string containerName = "xml";
 string tableName = "xmloutput";
-string blobName = "Sample.xml";
-string partitionKey = "entityData";
+string blobName = "Sample1.xml";
+string partitionKey = "partitionKey";
 
 // For blob Storage
 var blobServiceClient = new BlobServiceClient(connectionString);
@@ -26,7 +26,7 @@ CloudTable table = tableClient.GetTableReference(tableName);
 // Create a batch operation to insert the parsed entities into the table
 TableBatchOperation batchOperation = new TableBatchOperation();
 
-var propertyNames = new string[] { "PreferredName", "IndustryCode", "AddressLine1", "CityName", "StateOrProvince", "PostalCountry" };
+var propertyNames = new string[] { "Property1", "Property2", "Property3"};
 
 using (Stream stream = await blob.OpenReadAsync())
 {
@@ -34,7 +34,7 @@ using (Stream stream = await blob.OpenReadAsync())
     var xmlData = XDocument.Load(stream);
 
     // Get the EntityInformation element information
-    var entityInformations = xmlData.Root?.Elements("Body").Descendants("EntityInformation");
+    var entityInformations = xmlData.Root?.Elements("Body").Descendants("Parent");
 
     if (entityInformations is null)
     {
@@ -43,7 +43,7 @@ using (Stream stream = await blob.OpenReadAsync())
 
     foreach (var entityInfo in entityInformations)
     {
-        var industryCode = entityInfo.Descendants(name: "IndustryCode").FirstOrDefault()?.Value;
+        var industryCode = entityInfo.Descendants(name: "SpecificCode").FirstOrDefault()?.Value;
 
         if (industryCode is null)
             return;
