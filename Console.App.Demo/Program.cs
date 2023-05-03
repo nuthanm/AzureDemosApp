@@ -41,7 +41,7 @@ public class ConsoleApplication3
             BlobDownloadInfo downloadInfo = await blobClient.DownloadAsync();
 
             // get xml from zip file
-            var (xmlStream, nameOftheXmlFile) = GetXMLinStream(downloadInfo);
+            var (xmlStream,nameOftheXmlFile) = GetXMLinStream(downloadInfo);
 
             if (xmlStream is null)
                 throw new NullReferenceException("No content in xml");
