@@ -38,115 +38,37 @@ public class ConsoleApplication3
             var blobServiceClient = new BlobServiceClient(connectionString);
             var containerClient = blobServiceClient.GetBlobContainerClient(containerName);
 
+
+            Console.WriteLine("Process Begin.....");
+            txtResult.AppendLine("Process Begin....");
+
             // Read all xml files from the container
             await foreach (BlobItem blobItem in containerClient.GetBlobsAsync())
             {
                 // Get each blob from the container
                 BlobClient blobClient = containerClient.GetBlobClient(blobItem.Name);
                 BlobDownloadInfo downloadInfo = await blobClient.DownloadAsync();
-                
-                originalFileName = blobItem.Name;
 
-                // This way we can handle both zip and xml
-                if (Path.GetExtension(blobItem.Name).EndsWith(".zip"))
-                {                    
-                    // get xml from zip file
-                    (xmlStream, nameOftheXmlFile) = GetXMLinStream(downloadInfo);
-                    txtResult.AppendLine($"File is with zip and extract actual xml file : {blobItem.Name} and xml file : {nameOftheXmlFile}");
-                    Console.WriteLine($"File is with zip and extract actual xml file : {blobItem.Name} and xml file : {nameOftheXmlFile}");
-                }
-                else
-                {
-                    // if not zip
-                    (xmlStream, nameOftheXmlFile) = (downloadInfo.Content, blobItem.Name);
-                }
+                Console.WriteLine($"Original Blob name: {blobItem.Name}");
+                txtResult.AppendLine($"Original Blob name: {blobItem.Name}");
 
-                // Check if xmlStream is null then we stop whole process
-                if (xmlStream is null)
-                {
-                    txtResult.AppendLine($"No content in XML to process and fileName : {nameOftheXmlFile}");
-                    throw new NullReferenceException($"No content in XML to process and fileName : {nameOftheXmlFile}");
-                }
+                Console.WriteLine("----------");
+                txtResult.AppendLine("-------------------");
 
-                // We are adding new attribute in xml:noNamespaceSchemaLocation (If incase not there)
-                var updatedStream = addXSINewAttribute(xmlStream);
-
-                // Pass the updatedStream for further operation
-                using StreamReader reader = new StreamReader(updatedStream);
-                string content = await reader.ReadToEndAsync();
-
-                // Replace if any BOM characters in the xml
-                content = Regex.Replace(content, @"\uFEFF", string.Empty);
-
-                // Get xsd file from another container
-                var xsdContainer = blobServiceClient.GetBlobContainerClient(strXsdContainer);
-                var xsdBlobClient = xsdContainer.GetBlobClient("schemaBOM.xsd");
-
-                // Checking whether xsd blob exists
-                if (await xsdBlobClient.ExistsAsync())
-                {
-                    var response = await xsdBlobClient.DownloadAsync();
-
-                    // Adding again XSI new attribute in xsd file
-                    updatedStream = GetUpdatedStreamForXSD(response);
-
-                    using (var streamReader = new StreamReader(updatedStream))
-                    {
-                        while (!streamReader.EndOfStream)
-                        {
-                            var xsdContent = await streamReader.ReadToEndAsync();
-
-                            // Validate this xml against with xsd schema
-                            // TODO: Timebeing we are commented but we will add this in azure function
-                            // bool xmlResponse = ValidateXml(content, xsdContent);
-
-                            // Option 1: Update the content in xml and place it in tempContainer
-                            await UploadBlobContentIntoTemp(tempContainer, nameOftheXmlFile, content);
-
-                            // If you want to take the content from tempContainer then pass true or else false
-                            await CopyBlobFromSourceToTarget(containerName, successContainer, nameOftheXmlFile, true);
-
-                            /*
-                             *  // TODO: Timebeing we are commented but we will add this in azure function
-                            if (xmlResponse)
-                            {
-                                // If you want to take the content from temp then pass true or else false
-                                await CopyBlobFromSourceToTarget(containerName, successContainer, nameOftheXmlFile, true);
-                                // await CopyBlobFromSourceToTarget(containerName, successContainer, blobItem.Name, true);
-                            }
-                            else
-                            {
-                                await CopyBlobFromSourceToTarget(containerName, errContainer, nameOftheXmlFile, true);
-                            }
-                            */
-                        }
-                    }
-
-                }
-                else
-                {
-                    Console.WriteLine($"XSD Blob doesn't exit: {xsdBlobClient.Name}");
-                    txtResult.AppendLine($"XSD Blob doesn't exit: {xsdBlobClient.Name}");
-                }
+                await UnzipAndCopyTheseStreamsInDestinationContainer(blobServiceClient, downloadInfo);
             }
 
-            Console.WriteLine($"Blob name: {nameOftheXmlFile}");
-            txtResult.AppendLine($"Blob name: {nameOftheXmlFile}");
-            Console.WriteLine("----------");
+
+            Console.WriteLine("Process Completed.");
+            txtResult.AppendLine("Process Completed.");
+
             File.WriteAllText(Directory.GetCurrentDirectory() + @"/errorXML.txt", txtResult.ToString());
 
-            // TODO: Remove this extra logic which causes delay the process.
-            //BlobContainerClient xmlContainer = blobServiceClient.GetBlobContainerClient(successContainer);
-            //BlobClient xmlParsedBlob = xmlContainer.GetBlobClient(nameOftheXmlFile);
-            //using (Stream stream = await xmlParsedBlob.OpenReadAsync())
-            //{
-            //    var xmlData = XDocument.Load(stream);
-            //}
         }
         catch (Exception ex)
         {
-            txtResult.AppendLine($"Error during processing zip/xml file : {ex.Message} and current fileName is {nameOftheXmlFile}");
-            Console.WriteLine($"Error during processing zip/xml file : {ex.Message} and current fileName is {nameOftheXmlFile}");
+            txtResult.AppendLine($"Error during processing zip/xml file : {ex.Message} and original fileName is {originalFileName}");
+            Console.WriteLine($"Error during processing zip/xml file : {ex.Message} and original fileName is {originalFileName}");
 
             // copying the original file and place it in failded folder.
             await CopyBlobFromSourceToTarget(containerName, errContainer, originalFileName, false);
@@ -156,23 +78,96 @@ public class ConsoleApplication3
 
     }
 
-    private (Stream?, string) GetXMLinStream(BlobDownloadInfo downloadInfo)
+    private async Task UnzipAndCopyTheseStreamsInDestinationContainer(BlobServiceClient blobServiceClient, BlobDownloadInfo downloadInfo)
     {
-        using (ZipArchive zipObj = new ZipArchive(downloadInfo.Content))
-        {
-            foreach (ZipArchiveEntry zipArchiveEntry in zipObj.Entries)
-            {
-                // Get the contents of the entry
-                using (StreamReader reader = new StreamReader(zipArchiveEntry.Open()))
-                {
-                    byte[] byteArray = Encoding.UTF8.GetBytes(reader.ReadToEnd());
 
-                    return (new MemoryStream(byteArray), zipArchiveEntry.Name);
+        string outputFileName = string.Empty;
+        int sequenceOfFile = 1;
+
+        try
+        {
+            using (ZipArchive zipObj = new ZipArchive(downloadInfo.Content))
+            {
+                foreach (ZipArchiveEntry zipArchiveEntry in zipObj.Entries)
+                {
+                    Console.WriteLine($"Blob original fileName: {zipArchiveEntry.Name}, process begin");
+                    txtResult.AppendLine($"Blob original fileName: {zipArchiveEntry.Name}, process begin");
+
+                    // Get the contents of the entry
+                    using (StreamReader reader = new StreamReader(zipArchiveEntry.Open()))
+                    {
+                        byte[] byteArray = Encoding.UTF8.GetBytes(reader.ReadToEnd());
+
+                        var stream = new MemoryStream(byteArray);
+                        var onlyFolder = zipArchiveEntry.FullName?.Contains('/') == true ? $"{zipArchiveEntry.FullName.Split('/')[0]}/" : string.Empty;
+                        outputFileName = $"{onlyFolder}output_{DateTime.Now:yyyyMMddHHmmssfff}_{sequenceOfFile}.xml";
+                        await PerformCopyAction(blobServiceClient, stream, outputFileName);
+                    }
+
+                    Console.WriteLine($"Blob updated fileName: {outputFileName} and file_{sequenceOfFile} out of {zipObj.Entries.Count}, process end");
+                    txtResult.AppendLine($"Blob updated fileName: {outputFileName} and file_{sequenceOfFile} out of {zipObj.Entries.Count}, process end\"");
+                    sequenceOfFile++;
                 }
             }
         }
+        catch
+        {
 
-        return (null, null);
+            Console.WriteLine($"Error during unzip/copy action: {outputFileName}, process interrupt");
+            txtResult.AppendLine($"Error during unzip/copy action: {outputFileName}, process interrupt");
+            throw new Exception($"Error during unzip/copy action: {outputFileName}, process interrupt");
+        }
+    }
+
+    private async Task PerformCopyAction(BlobServiceClient blobServiceClient, MemoryStream xmlStream, string outputFileName)
+    {
+
+        // Check if xmlStream is null then we stop whole process
+        if (xmlStream is null)
+        {
+            txtResult.AppendLine($"No content in XML to process and fileName : {outputFileName}");
+            throw new NullReferenceException($"No content in XML to process and fileName : {outputFileName}");
+        }
+
+        // We are adding new attribute in xml:noNamespaceSchemaLocation (If incase not there)
+        var updatedStream = addXSINewAttribute(xmlStream);
+        StreamReader reader = new StreamReader(updatedStream);
+        string content = await reader.ReadToEndAsync();
+
+        // Replace if any BOM characters in the xml
+        content = Regex.Replace(content, @"\uFEFF", string.Empty);
+
+        // Get xsd file from another container
+        var xsdContainer = blobServiceClient.GetBlobContainerClient(strXsdContainer);
+        var xsdBlobClient = xsdContainer.GetBlobClient("schema.xsd");
+
+        // Checking whether xsd blob exists
+        if (await xsdBlobClient.ExistsAsync())
+        {
+            var response = await xsdBlobClient.DownloadAsync();
+
+            // Adding again XSI new attribute in xsd file
+            updatedStream = GetUpdatedStreamForXSD(response);
+
+            using (var streamReader = new StreamReader(updatedStream))
+            {
+                while (!streamReader.EndOfStream)
+                {
+                    var xsdContent = await streamReader.ReadToEndAsync();
+
+                    // Option 1: Update the content in xml and place it in tempContainer
+                    await UploadBlobContentIntoTemp(tempContainer, outputFileName, content);
+
+                    // If you want to take the content from tempContainer then pass true or else false
+                    await CopyBlobFromSourceToTarget(containerName, successContainer, outputFileName, true);
+                }
+            }
+        }
+        else
+        {
+            Console.WriteLine($"XSD Blob doesn't exit: {xsdBlobClient.Name}");
+            txtResult.AppendLine($"XSD Blob doesn't exit: {xsdBlobClient.Name}");
+        }
     }
 
     public bool ValidateXml(string xmlString, string xsdFilePath)
@@ -298,7 +293,7 @@ public class ConsoleApplication3
 
             // Delete the file from temp container
             if (isTemp)
-                await sourceContainer.DeleteIfExistsAsync();
+                await sourceBlob.DeleteIfExistsAsync();
 
             txtResult.AppendLine($"Successfull - Blob copying data from source: {srcContainer} to target: {destinationContainer}");
             Console.WriteLine($"Successfull - Blob copying data from source: {srcContainer} to target: {destinationContainer}");
