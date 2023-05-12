@@ -128,6 +128,7 @@ public class ConsoleApplication3
 
         string outputFileName = string.Empty;
         int sequenceOfFile = 1;
+        MemoryStream xmlStream = new MemoryStream();
 
         try
         {
@@ -141,13 +142,14 @@ public class ConsoleApplication3
                     // Get the contents of the entry
                     using (StreamReader reader = new StreamReader(zipArchiveEntry.Open()))
                     {
-                        byte[] byteArray = Encoding.UTF8.GetBytes(reader.ReadToEnd());
+                        // Taking this entire stream and storing it in memory stream
+                        await reader.BaseStream.CopyToAsync(xmlStream);
 
-                        var stream = new MemoryStream(byteArray);
+                        // changing file or folder structure
                         var onlyFolder = zipArchiveEntry.FullName?.Contains('/') == true ? $"{zipArchiveEntry.FullName.Split('/')[0]}/" : string.Empty;
                         outputFileName = $"{onlyFolder}GS1Extract_{DateTime.Now:yyyyMMddHHmmssfff}_{sequenceOfFile}.xml";
 
-                        await PerformCopyAction(blobServiceClient, stream, outputFileName);
+                        await SplitXmlIfAnyAsync(blobServiceClient, xmlStream, outputFileName);
                     }
 
                     Console.WriteLine($"Blob updated fileName: {outputFileName} and file_{sequenceOfFile} out of {zipObj.Entries.Count}, process end");
