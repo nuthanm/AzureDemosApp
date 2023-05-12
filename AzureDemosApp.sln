@@ -5,7 +5,9 @@ VisualStudioVersion = 17.5.33516.290
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Azure.Storage.Demo.App", "Azure.Storage.Demo.App\Azure.Storage.Demo.App.csproj", "{DC28C4C8-9084-47F0-BDF3-39F2538ADD88}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzureDemosApp.XmlValidator.App", "AzureDemosApp.XmlValidator.App\AzureDemosApp.XmlValidator.App.csproj", "{827FCC9E-0047-42E9-A404-80CC8EF1376E}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AzureDemosApp.XmlValidator.App", "AzureDemosApp.XmlValidator.App\AzureDemosApp.XmlValidator.App.csproj", "{827FCC9E-0047-42E9-A404-80CC8EF1376E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzureDemoApp.XML.Version3", "AzureDemoApp.XML.Version3\AzureDemoApp.XML.Version3.csproj", "{B5761015-BA3D-4E48-8EE2-B818A69E12BC}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -21,6 +23,10 @@ Global
 		{827FCC9E-0047-42E9-A404-80CC8EF1376E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{827FCC9E-0047-42E9-A404-80CC8EF1376E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{827FCC9E-0047-42E9-A404-80CC8EF1376E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B5761015-BA3D-4E48-8EE2-B818A69E12BC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B5761015-BA3D-4E48-8EE2-B818A69E12BC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B5761015-BA3D-4E48-8EE2-B818A69E12BC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B5761015-BA3D-4E48-8EE2-B818A69E12BC}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

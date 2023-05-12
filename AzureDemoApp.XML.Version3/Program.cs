@@ -4,11 +4,12 @@ using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Blob;
 using System.IO.Compression;
 using System.Linq.Expressions;
+using System.Xml.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
-using System.Xml.Linq;
 using System.Xml.Schema;
+using System.Runtime.CompilerServices;
 
 await new ConsoleApplication3().ReadBlobsFromContainerAsync();
 
@@ -18,18 +19,23 @@ public class ConsoleApplication3
     public StringBuilder txtResult = new StringBuilder();
 
 
-    public string connectionString = "AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;DefaultEndpointsProtocol=http;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;TableEndpoint=http://127.0.0.1:10002/devstoreaccount1;";
-    public string containerName = "zipoutput";
-    public string successContainer = "validationpassed";
+
+    public string connectionString = "DefaultEndpointsProtocol=https;AccountName=umastorage;AccountKey=e3uGCkpxPOF7vwAbt1cQpazrn0F9s7Ek9wcLgo4KrxA1LE5Y2CfRDPNpw3ghHuT2cnDL6zQpy7fx6A/lj6786g==;EndpointSuffix=core.windows.net";
+    //public string connectionString = "AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;DefaultEndpointsProtocol=http;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;TableEndpoint=http://127.0.0.1:10002/devstoreaccount1;";
+    public string containerName = "temp";
+    public string successContainer = "successcontainer";
     public string errContainer = "failed";
     public string tableName = "aggatewayencoding";
     string partitionKey = "entityData";
     public string strXsdContainer = "xsdcontainer-aggateway";
-    private string tempContainer = "temp";
+    private string tempContainer = "stagingcontainer";
     private string originalFileName = string.Empty;
     private string nameOftheXmlFile = string.Empty;
     private Stream? xmlStream;
     private MemoryStream? ms;
+
+    // Maximum size of each output file to 1 GB (in bytes)
+    const long MaxFileSize = 1_000_000_000;
 
     public async Task ReadBlobsFromContainerAsync()
     {
@@ -54,8 +60,9 @@ public class ConsoleApplication3
 
                 Console.WriteLine("----------");
                 txtResult.AppendLine("-------------------");
-
-                await UnzipAndCopyTheseStreamsInDestinationContainer(blobServiceClient, downloadInfo);
+                
+                // If file size is less than 1 GB then direct this call and executes the existing flow.
+                await UnzipAndCopyTheseStreamsInDestinationContainer(blobServiceClient, downloadInfo.Content);                
             }
 
 
@@ -78,7 +85,45 @@ public class ConsoleApplication3
 
     }
 
-    private async Task UnzipAndCopyTheseStreamsInDestinationContainer(BlobServiceClient blobServiceClient, BlobDownloadInfo downloadInfo)
+    
+    // Read Header information and store it in stream
+    private async Task GetHeaderInformationIntoStream(Stream forHeaderStream)
+    {
+        XmlReader reader = XmlReader.Create(forHeaderStream);
+        reader.ReadToFollowing("Header");
+
+        while (!reader.EOF)
+        {
+            if (reader.Name != "Header")
+            {
+                reader.ReadToFollowing("Header");
+            }
+        }
+
+        byte[] headerBytes = Encoding.UTF8.GetBytes(reader.Value);
+        await forHeaderStream.WriteAsync(headerBytes, 0, headerBytes.Length);
+    }
+
+
+    // Read Header information and store it in stream
+    private async Task GetEntityInformationIntoStream(Stream forHeaderStream)
+    {
+        XmlReader reader = XmlReader.Create(forHeaderStream);
+        reader.ReadToFollowing("EntityInformation");
+
+        while (!reader.EOF)
+        {
+            if (reader.Name != "EntityInformation")
+            {
+                reader.ReadToFollowing("EntityInformation");
+            }
+        }
+
+        byte[] headerBytes = Encoding.UTF8.GetBytes(reader.Value);
+        await forHeaderStream.WriteAsync(headerBytes, 0, headerBytes.Length);
+    }
+
+    private async Task UnzipAndCopyTheseStreamsInDestinationContainer(BlobServiceClient blobServiceClient, Stream downloadInfo)
     {
 
         string outputFileName = string.Empty;
@@ -86,7 +131,7 @@ public class ConsoleApplication3
 
         try
         {
-            using (ZipArchive zipObj = new ZipArchive(downloadInfo.Content))
+            using (ZipArchive zipObj = new ZipArchive(downloadInfo))
             {
                 foreach (ZipArchiveEntry zipArchiveEntry in zipObj.Entries)
                 {
@@ -100,10 +145,8 @@ public class ConsoleApplication3
 
                         var stream = new MemoryStream(byteArray);
                         var onlyFolder = zipArchiveEntry.FullName?.Contains('/') == true ? $"{zipArchiveEntry.FullName.Split('/')[0]}/" : string.Empty;
-                        outputFileName = $"{onlyFolder}output_{DateTime.Now:yyyyMMddHHmmssfff}_{sequenceOfFile}.xml";
-                        
-                        //TODO: Split the bigger size into smaller files 
-                        
+                        outputFileName = $"{onlyFolder}GS1Extract_{DateTime.Now:yyyyMMddHHmmssfff}_{sequenceOfFile}.xml";
+
                         await PerformCopyAction(blobServiceClient, stream, outputFileName);
                     }
 
@@ -124,6 +167,11 @@ public class ConsoleApplication3
 
     private async Task PerformCopyAction(BlobServiceClient blobServiceClient, MemoryStream xmlStream, string outputFileName)
     {
+        await SplitXmlIfAnyAsync(blobServiceClient, xmlStream, outputFileName);        
+    }
+
+    private async Task CopyAction(BlobServiceClient blobServiceClient, MemoryStream xmlStream, string outputFileName)
+    {
 
         // Check if xmlStream is null then we stop whole process
         if (xmlStream is null)
@@ -142,7 +190,7 @@ public class ConsoleApplication3
 
         // Get xsd file from another container
         var xsdContainer = blobServiceClient.GetBlobContainerClient(strXsdContainer);
-        var xsdBlobClient = xsdContainer.GetBlobClient("schema.xsd");
+        var xsdBlobClient = xsdContainer.GetBlobClient("aggateway.xsd");
 
         // Checking whether xsd blob exists
         if (await xsdBlobClient.ExistsAsync())
@@ -170,6 +218,58 @@ public class ConsoleApplication3
         {
             Console.WriteLine($"XSD Blob doesn't exit: {xsdBlobClient.Name}");
             txtResult.AppendLine($"XSD Blob doesn't exit: {xsdBlobClient.Name}");
+        }
+    }
+
+    private async Task SplitXmlIfAnyAsync(BlobServiceClient blobServiceClient, MemoryStream xmlStream, string fileName)
+    {
+        // Read the input file into a byte array
+        byte[] inputBytes = new byte[xmlStream.Length];
+        xmlStream.Read(inputBytes, 0, inputBytes.Length);
+
+        // Calculate the number of splits based on the file size
+        int numberOfSplits = (int)Math.Ceiling((double)inputBytes.Length / MaxFileSize);
+
+        Console.WriteLine($"FileName: {fileName} and actual file size is {inputBytes.Length} and how many splits: {numberOfSplits}");
+        txtResult.AppendLine($"FileName: {fileName} and actual file size is {inputBytes.Length} and how many splits: {numberOfSplits}");
+
+        if (numberOfSplits > 1)
+        {
+            // Split the input file into multiple chunks
+            for (int i = 0; i < numberOfSplits; i++)
+            {
+                // Create a MemoryStream to hold the current split content
+                using (var splitStream = new MemoryStream())
+                {
+                    // Create a BinaryWriter to write to the split stream
+                    using (var writer = new BinaryWriter(splitStream))
+                    {
+                        // Calculate the start and end positions for the current split
+                        int startPos = (int)(i * MaxFileSize);
+                        int endPos = (int)Math.Min(startPos + MaxFileSize, inputBytes.Length);
+
+                        // Get Header Information and write this into split stream
+                        await GetHeaderInformationIntoStream(writer.BaseStream);
+
+                        // Write the current split content to the split stream
+                        await GetEntityInformationIntoStream(writer.BaseStream);
+                        // writer.Write(inputBytes, startPos, endPos - startPos);
+                    }
+
+                    // Reset the position of the split stream to the beginning
+                    splitStream.Position = 0;
+
+                    // Generate the file name for the current split
+                    string updatedFileName = $"split_{i + 1}.xml"; // Adjust the file naming pattern as needed
+
+                    // Save the split content to the output container
+                    await CopyAction(blobServiceClient, splitStream, updatedFileName);
+                }
+            }
+        }
+        else
+        {
+            await CopyAction(blobServiceClient, xmlStream, fileName);
         }
     }
 
@@ -346,7 +446,7 @@ public class ConsoleApplication3
         if (!root.HasAttribute("xsi:noNamespaceSchemaLocation", "http://www.w3.org/2001/XMLSchema-instance"))
         {
             XmlAttribute attribute = root.OwnerDocument.CreateAttribute("xsi", "noNamespaceSchemaLocation", "http://www.w3.org/2001/XMLSchema-instance");
-            attribute.Value = "abc.xsd";
+            attribute.Value = "aggateway.xsd";
             root.SetAttributeNode(attribute);
         }
 
@@ -354,20 +454,4 @@ public class ConsoleApplication3
         updatedStream.Position = 0;
         return updatedStream;
     }
-    #region Ignore
-    public bool IsXMLFilePresentWithUTF8BOM(string inputString)
-    {
-        bool isXMLFilePresentWithUTF8BOM = false;
-
-        byte[] byteArray = Encoding.UTF8.GetBytes(inputString);
-
-        if (byteArray.Length >= 3 && byteArray[0] == 0xEF && byteArray[1] == 0xBB && byteArray[2] == 0xBF)
-        {
-            isXMLFilePresentWithUTF8BOM = true;
-        }
-
-        return isXMLFilePresentWithUTF8BOM;
-    }
-    #endregion Ignore
-
 }
